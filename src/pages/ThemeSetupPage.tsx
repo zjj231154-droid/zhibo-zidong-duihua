@@ -6,7 +6,7 @@ import { ThemePreview } from "../components/ThemePreview";
 import { useProjectStore } from "../store/projectStore";
 
 export function ThemeSetupPage() {
-  const { project, updateBackground, updateActorBubbleStyle, updateFonts, saveCurrentProject, setView } =
+  const { project, updateBackground, updateActorBubbleStyle, updateFonts, updateCanvasAspectRatio, saveCurrentProject, setView } =
     useProjectStore();
 
   if (!project) return null;
@@ -34,6 +34,21 @@ export function ThemeSetupPage() {
 
       <section className="theme-layout">
         <div className="theme-settings">
+          <section className="settings-panel">
+            <h2>画布比例</h2>
+            <div className="segmented full" aria-label="聊天画布比例">
+              {(["9:16", "3:2", "1:1"] as const).map((ratio) => (
+                <button
+                  key={ratio}
+                  type="button"
+                  className={(project.theme.canvas?.aspectRatio ?? "9:16") === ratio ? "selected" : ""}
+                  onClick={() => updateCanvasAspectRatio(ratio)}
+                >
+                  {ratio}
+                </button>
+              ))}
+            </div>
+          </section>
           <BackgroundSettingsPanel settings={project.theme.background!} onChange={updateBackground} />
           {project.actors.map((actor) => (
             <BubbleSettingsPanel

@@ -1,4 +1,5 @@
 import type { Project, RecentProject } from "../types/project";
+import { migrateProjectToLatest } from "./migrateProject";
 
 const PROJECTS_KEY = "script-chat-player.projects";
 const RECENTS_KEY = "script-chat-player.recents";
@@ -41,7 +42,7 @@ export async function saveProject(project: Project): Promise<void> {
 
 export async function openProject(projectId?: string): Promise<Project> {
   const projects = readProjectMap();
-  if (projectId && projects[projectId]) return projects[projectId];
+  if (projectId && projects[projectId]) return migrateProjectToLatest(projects[projectId]);
   throw new Error("项目文件损坏或不存在，无法打开。");
 }
 
@@ -50,7 +51,7 @@ export function importProjectFromJson(rawJson: string): Project {
   if (!project.id || !project.name || !Array.isArray(project.actors) || !Array.isArray(project.lines)) {
     throw new Error("项目文件损坏，无法打开。");
   }
-  return project;
+  return migrateProjectToLatest(project);
 }
 
 export function getRecentProjects(): RecentProject[] {

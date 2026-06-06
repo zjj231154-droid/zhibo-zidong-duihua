@@ -5,6 +5,7 @@ import type {
   AppView,
   BackgroundSettings,
   BubbleStyle,
+  CanvasAspectRatio,
   FontSettings,
   ParsedLine,
   ParseResult,
@@ -14,12 +15,15 @@ import type {
   ProjectTheme,
   RecentProject,
   ScriptLine,
+  SubtitleSegment,
   TranscriptionStatus,
 } from "../types/project";
 import { parseScript } from "../utils/parseScript";
 import { getRecentProjects, saveProject } from "../utils/fileStorage";
 import { transcribeAudio } from "../services/transcriptionService";
-import { validateAudioFile } from "../utils/assetStorage";
+import { readAudioDuration, readFileAsDataUrl, validateAudioFile } from "../utils/assetStorage";
+import { migrateProjectToLatest } from "../utils/migrateProject";
+import { generateEstimatedSubtitleTimeline, validateSubtitleTimeline } from "../utils/subtitleTimeline";
 
 interface ProjectStore {
   view: AppView;
@@ -34,6 +38,12 @@ interface ProjectStore {
   recents: RecentProject[];
   transcriptionStatus: TranscriptionStatus;
   transcriptionFileName: string;
+  pendingAudioSource?: {
+    fileName: string;
+    filePath: string;
+    duration?: number;
+    transcriptionText?: string;
+  };
   setView: (view: AppView) => void;
   setProjectName: (name: string) => void;
   setRawScript: (script: string) => void;
@@ -48,6 +58,7 @@ interface ProjectStore {
   updateTheme: (theme: Partial<ProjectTheme>) => void;
   updateBackground: (changes: Partial<BackgroundSettings>) => void;
   updateFonts: (changes: Partial<FontSettings>) => void;
+  updateCanvasAspectRatio: (aspectRatio: CanvasAspectRatio) => void;
   finishActorSetup: () => boolean;
   setProject: (project: Project) => void;
   saveCurrentProject: () => Promise<void>;
@@ -55,7 +66,10 @@ interface ProjectStore {
   setCurrentIndex: (index: number) => void;
   setPlaybackStatus: (status: PlaybackStatus) => void;
   setPlaybackSpeed: (speed: PlaybackSpeed) => void;
+  setPlaybackMode: (mode: "text" | "audio") => void;
   setAutoScroll: (enabled: boolean) => void;
+  regenerateSubtitleTimeline: () => void;
+  updateSubtitleSegment: (audioId: string, segmentId: string, changes: Partial<SubtitleSegment>) => void;
   updateLineText: (lineId: string, text: string) => void;
   switchLineActor: (lineId: string) => void;
   deleteLine: (lineId: string) => void;
@@ -88,6 +102,7 @@ function createDefaultTheme(): ProjectTheme {
   return {
     background: createDefaultBackground(),
     fonts: {},
+    canvas: { aspectRatio: "9:16" },
   };
 }
 
@@ -146,7 +161,8 @@ function withProjectUpdate(project: Project, updater: (project: Project) => Proj
 }
 
 function normalizeProject(project: Project): Project {
-  const normalizedActors = project.actors.map((actor) => {
+  const migrated = migrateProjectToLatest(project);
+  const normalizedActors = migrated.actors.map((actor) => {
     const bubbleStyle = actor.bubbleStyle ?? createBubbleStyle(actor.bubbleColor, actor.textColor);
     return {
       ...actor,
@@ -157,20 +173,23 @@ function normalizeProject(project: Project): Project {
   });
 
   return {
-    ...project,
+    ...migrated,
     actors: normalizedActors,
     theme: {
       ...createDefaultTheme(),
-      ...(project.theme ?? {}),
+      ...(migrated.theme ?? {}),
       background: {
         ...createDefaultBackground(),
-        ...(project.theme?.background ?? {}),
+        ...(migrated.theme?.background ?? {}),
       },
       fonts: {
-        ...(project.theme?.fonts ?? {}),
+        ...(migrated.theme?.fonts ?? {}),
+      },
+      canvas: {
+        aspectRatio: migrated.theme?.canvas?.aspectRatio ?? "9:16",
       },
     },
-    audioSources: project.audioSources ?? [],
+    audioSources: migrated.audioSources ?? [],
   };
 }
 
@@ -184,6 +203,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   errorMessage: "",
   transcriptionStatus: "idle",
   transcriptionFileName: "",
+  pendingAudioSource: undefined,
   recents: getRecentProjects(),
 
   setView: (view) => set({ view, errorMessage: "", lastMessage: "" }),
@@ -200,6 +220,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       playbackStatus: "idle",
       transcriptionStatus: "idle",
       transcriptionFileName: "",
+      pendingAudioSource: undefined,
       errorMessage: "",
       lastMessage: "",
     }),
@@ -235,6 +256,24 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     const actors = createActors(result.actors);
     const createdAt = now();
+    const lines = createLines(result.lines, actors);
+    const pendingAudio = get().pendingAudioSource;
+    const audioSources = pendingAudio
+      ? [
+          {
+            id: id("audio"),
+            fileName: pendingAudio.fileName,
+            filePath: pendingAudio.filePath,
+            duration: pendingAudio.duration,
+            importedAt: now(),
+            transcriptionText: pendingAudio.transcriptionText ?? rawScript,
+            transcriptionStatus: "success" as const,
+            subtitles: pendingAudio.duration
+              ? generateEstimatedSubtitleTimeline(lines, actors, pendingAudio.duration)
+              : [],
+          },
+        ]
+      : [];
     const project: Project = {
       id: id("project"),
       name: get().projectName.trim(),
@@ -242,13 +281,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       updatedAt: createdAt,
       originalScript: rawScript,
       actors,
-      lines: createLines(result.lines, actors),
+      lines,
       playback: {
         speed: 1,
         autoScroll: true,
+        mode: audioSources.length > 0 && audioSources[0].duration ? "audio" : "text",
+        currentAudioId: audioSources[0]?.id,
       },
       theme: createDefaultTheme(),
-      audioSources: [],
+      audioSources,
     };
 
     set({
@@ -256,6 +297,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       project,
       view: "actor-setup",
       currentIndex: 0,
+      pendingAudioSource: undefined,
       errorMessage: "",
       lastMessage: `检测到 2 个角色，${result.lines.length} 条台词。`,
     });
@@ -268,6 +310,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return false;
     }
     if (!file) return false;
+
+    let filePath: string;
+    let duration: number | undefined;
+    try {
+      filePath = await readFileAsDataUrl(file);
+      duration = await readAudioDuration(filePath);
+    } catch {
+      filePath = await readFileAsDataUrl(file);
+      set({ lastMessage: "未能读取音频时长，已保留文字播放模式。" });
+    }
 
     set({
       transcriptionStatus: "uploading",
@@ -286,6 +338,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({
       rawScript: result.fullText,
       transcriptionStatus: "success",
+      pendingAudioSource: {
+        fileName: file.name,
+        filePath,
+        duration,
+        transcriptionText: result.fullText,
+      },
       view: "transcription-review",
       lastMessage: "识别完成，当前为 mock 转写结果。",
       errorMessage: "",
@@ -382,6 +440,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       })),
     });
   },
+  updateCanvasAspectRatio: (aspectRatio) => {
+    const project = get().project;
+    if (!project) return;
+    set({
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        theme: {
+          ...current.theme,
+          canvas: { aspectRatio },
+        },
+      })),
+    });
+  },
   finishActorSetup: () => {
     const project = get().project;
     if (!project) return false;
@@ -443,10 +514,70 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (!project) return;
     set({ project: { ...project, playback: { ...project.playback, speed } } });
   },
+  setPlaybackMode: (mode) => {
+    const project = get().project;
+    if (!project) return;
+    const currentAudio = project.audioSources?.find((audio) => audio.id === project.playback.currentAudioId);
+    if (mode === "audio" && !currentAudio?.filePath) {
+      set({ errorMessage: "当前项目未上传音频，请先上传音频后再使用音频同步播放。" });
+      return;
+    }
+    set({
+      errorMessage: "",
+      project: {
+        ...project,
+        playback: { ...project.playback, mode },
+      },
+    });
+  },
   setAutoScroll: (autoScroll) => {
     const project = get().project;
     if (!project) return;
     set({ project: { ...project, playback: { ...project.playback, autoScroll } } });
+  },
+  regenerateSubtitleTimeline: () => {
+    const project = get().project;
+    if (!project) return;
+    const currentAudioId = project.playback.currentAudioId ?? project.audioSources?.[0]?.id;
+    const audio = project.audioSources?.find((item) => item.id === currentAudioId);
+    if (!audio?.duration) {
+      set({ errorMessage: "未能读取音频时长，已切换为文字播放模式。" });
+      get().setPlaybackMode("text");
+      return;
+    }
+    const subtitles = generateEstimatedSubtitleTimeline(project.lines, project.actors, audio.duration);
+    set({
+      errorMessage: "",
+      lastMessage: "已重新生成字幕时间轴。",
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        audioSources: current.audioSources?.map((item) => (item.id === audio.id ? { ...item, subtitles } : item)),
+        playback: { ...current.playback, mode: "audio", currentAudioId: audio.id },
+      })),
+    });
+  },
+  updateSubtitleSegment: (audioId, segmentId, changes) => {
+    const project = get().project;
+    if (!project) return;
+    const nextProject = withProjectUpdate(project, (current) => ({
+      ...current,
+      audioSources: current.audioSources?.map((audio) =>
+        audio.id === audioId
+          ? {
+              ...audio,
+              subtitles: audio.subtitles?.map((segment) =>
+                segment.id === segmentId ? { ...segment, ...changes } : segment,
+              ),
+            }
+          : audio,
+      ),
+    }));
+    const audio = nextProject.audioSources?.find((item) => item.id === audioId);
+    const errors = validateSubtitleTimeline(audio?.subtitles ?? [], audio?.duration);
+    set({
+      project: nextProject,
+      errorMessage: errors.join(" "),
+    });
   },
   updateLineText: (lineId, text) => {
     const project = get().project;
@@ -456,6 +587,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ...current,
         lines: current.lines.map((line) => (line.id === lineId ? { ...line, text, updatedAt: now() } : line)),
       })),
+      lastMessage:
+        project.playback.mode === "audio"
+          ? "台词内容已修改，建议重新生成字幕时间轴。"
+          : get().lastMessage,
     });
   },
   switchLineActor: (lineId) => {

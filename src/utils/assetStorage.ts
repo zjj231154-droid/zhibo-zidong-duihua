@@ -2,7 +2,7 @@ const maxAudioSize = 100 * 1024 * 1024;
 
 export const supportedAudioExtensions = ["mp3", "wav", "m4a", "webm", "ogg", "flac"];
 export const supportedImageExtensions = ["png", "jpg", "jpeg", "webp", "gif"];
-export const supportedBubbleExtensions = ["png", "svg", "webp"];
+export const supportedBubbleExtensions = ["png", "jpg", "jpeg", "webp", "svg"];
 export const supportedFontExtensions = ["ttf", "otf", "woff", "woff2"];
 
 export function getFileExtension(file: File): string {
@@ -27,7 +27,9 @@ export function validateImageFile(file: File): string[] {
 }
 
 export function validateBubbleFile(file: File): string[] {
-  return supportedBubbleExtensions.includes(getFileExtension(file)) ? [] : ["气泡图片格式不支持。"];
+  return supportedBubbleExtensions.includes(getFileExtension(file))
+    ? []
+    : ["暂不支持该气泡文件格式，请上传 png、jpg、jpeg、webp 或 svg 文件。"];
 }
 
 export function validateFontFile(file: File): string[] {
@@ -40,6 +42,22 @@ export function readFileAsDataUrl(file: File): Promise<string> {
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = reject;
     reader.readAsDataURL(file);
+  });
+}
+
+export function readAudioDuration(src: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const audio = document.createElement("audio");
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      resolve(Number.isFinite(audio.duration) ? audio.duration : 0);
+      audio.remove();
+    };
+    audio.onerror = () => {
+      audio.remove();
+      reject(new Error("未能读取音频时长，已切换为文字播放模式。"));
+    };
+    audio.src = src;
   });
 }
 

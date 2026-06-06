@@ -1,6 +1,8 @@
 export type ActorPosition = "left" | "right";
 export type PlaybackSpeed = 0.5 | 1 | 1.5 | 2;
 export type PlaybackStatus = "idle" | "playing" | "paused" | "ended";
+export type PlaybackMode = "text" | "audio";
+export type CanvasAspectRatio = "9:16" | "3:2" | "1:1";
 export type AppView =
   | "home"
   | "new-project"
@@ -52,11 +54,18 @@ export interface PlaybackSettings {
   speed: PlaybackSpeed;
   currentLineId?: string;
   autoScroll: boolean;
+  mode: PlaybackMode;
+  currentAudioId?: string;
 }
 
 export interface ProjectTheme {
   background?: BackgroundSettings;
   fonts?: FontSettings;
+  canvas?: CanvasSettings;
+}
+
+export interface CanvasSettings {
+  aspectRatio: CanvasAspectRatio;
 }
 
 export interface BackgroundSettings {
@@ -93,6 +102,16 @@ export interface AudioSource {
   importedAt: string;
   transcriptionText?: string;
   transcriptionStatus: "pending" | "success" | "failed";
+  subtitles?: SubtitleSegment[];
+}
+
+export interface SubtitleSegment {
+  id: string;
+  lineId: string;
+  speakerId: string;
+  text: string;
+  startTime: number;
+  endTime: number;
 }
 
 export interface ParsedLine {

@@ -62,7 +62,7 @@ export function BubbleSettingsPanel({ actor, onChange }: BubbleSettingsPanelProp
       </label>
       <AssetUploader
         label="气泡背景图"
-        accept=".png,.svg,.webp,image/png,image/svg+xml,image/webp"
+        accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/svg+xml,image/webp"
         value={style.backgroundImagePath}
         onUpload={(file) => void handleUpload(file)}
         onClear={() => onChange({ backgroundImagePath: undefined })}
