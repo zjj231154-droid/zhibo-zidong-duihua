@@ -517,7 +517,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setPlaybackMode: (mode) => {
     const project = get().project;
     if (!project) return;
-    const currentAudio = project.audioSources?.find((audio) => audio.id === project.playback.currentAudioId);
+    const currentAudio =
+      project.audioSources?.find((audio) => audio.id === project.playback.currentAudioId) ?? project.audioSources?.[0];
     if (mode === "audio" && !currentAudio?.filePath) {
       set({ errorMessage: "当前项目未上传音频，请先上传音频后再使用音频同步播放。" });
       return;
@@ -526,7 +527,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       errorMessage: "",
       project: {
         ...project,
-        playback: { ...project.playback, mode },
+        playback: { ...project.playback, mode, currentAudioId: currentAudio?.id ?? project.playback.currentAudioId },
       },
     });
   },

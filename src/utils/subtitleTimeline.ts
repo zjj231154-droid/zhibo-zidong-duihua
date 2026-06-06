@@ -13,7 +13,7 @@ export function generateEstimatedSubtitleTimeline(
   if (!Number.isFinite(audioDuration) || audioDuration <= 0 || dialogueLines.length === 0) return [];
 
   const totalWeight = dialogueLines.reduce((sum, line) => sum + weightForLine(line.text), 0);
-  const minDuration = 1;
+  const minDuration = Math.min(1, audioDuration / dialogueLines.length);
   let cursor = 0;
 
   return dialogueLines.map((line, index) => {
