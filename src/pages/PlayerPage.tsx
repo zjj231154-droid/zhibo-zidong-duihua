@@ -64,6 +64,7 @@ export function PlayerPage() {
   const [editingLineId, setEditingLineId] = useState<string>("");
   const [exportOpen, setExportOpen] = useState(false);
   const [audioTime, setAudioTime] = useState(0);
+  const [playbackError, setPlaybackError] = useState("");
   const timerRef = useRef<number | undefined>(undefined);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -112,6 +113,7 @@ export function PlayerPage() {
     }
 
     function onPlay() {
+      setPlaybackError("");
       setPlaybackStatus("playing");
     }
 
@@ -170,9 +172,21 @@ export function PlayerPage() {
         setPlaybackMode("audio");
         return;
       }
-      void audioRef.current?.play();
+      const audioElement = audioRef.current;
+      if (!audioElement) {
+        setPlaybackError("音频播放器还没有准备好，请稍后再试。");
+        return;
+      }
+      const playPromise = audioElement.play();
+      if (playPromise) {
+        void playPromise.catch(() => {
+          setPlaybackStatus("paused");
+          setPlaybackError("音频播放被浏览器拦截，请点击上方音频控件的播放按钮，或重新点击底部播放。");
+        });
+      }
       return;
     }
+    setPlaybackError("");
     if (activeProject.lines.length === 0) return;
     if (currentIndex < 0 || playbackStatus === "ended") {
       const first = activeProject.lines.findIndex((line) => line.text.trim());
@@ -183,6 +197,7 @@ export function PlayerPage() {
 
   function pause() {
     if (activeProject.playback.mode === "audio") audioRef.current?.pause();
+    setPlaybackError("");
     setPlaybackStatus("paused");
   }
 
@@ -192,6 +207,7 @@ export function PlayerPage() {
       setAudioTime(0);
     }
     const first = activeProject.lines.findIndex((line) => line.text.trim());
+    setPlaybackError("");
     setCurrentIndex(first === -1 ? 0 : first);
     setPlaybackStatus("idle");
   }
@@ -249,6 +265,7 @@ export function PlayerPage() {
         <span>模式：{project.playback.mode === "audio" ? "音频" : "文字"}</span>
         {lastMessage && <strong>{lastMessage}</strong>}
         {errorMessage && <strong className="status-error">{errorMessage}</strong>}
+        {playbackError && <strong className="status-error">{playbackError}</strong>}
       </div>
       <section className="player-layout">
         <ScriptLineEditor
@@ -331,7 +348,13 @@ export function PlayerPage() {
         </div>
         {currentAudio?.filePath ? (
           <div className="audio-player-row">
-            <audio ref={audioRef} src={currentAudio.filePath} controls preload="metadata" />
+            <audio
+              ref={audioRef}
+              src={currentAudio.filePath}
+              controls
+              preload="metadata"
+              onError={() => setPlaybackError("音频文件无法播放，请重新上传或更换音频文件。")}
+            />
             <span>{currentAudio.fileName}</span>
             <span>
               {formatTime(audioTime)} / {formatTime(currentAudio.duration)}
