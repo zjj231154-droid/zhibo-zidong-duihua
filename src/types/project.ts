@@ -26,6 +26,7 @@ export interface Project {
   playback: PlaybackSettings;
   theme: ProjectTheme;
   audioSources?: AudioSource[];
+  audioAssets?: AudioAsset[];
 }
 
 export interface Actor {
@@ -38,6 +39,7 @@ export interface Actor {
   bubbleColor: string;
   /** @deprecated kept to migrate 1.0 projects */
   textColor: string;
+  isDefault?: boolean;
 }
 
 export interface ScriptLine {
@@ -46,6 +48,8 @@ export interface ScriptLine {
   text: string;
   type: "dialogue" | "note";
   order: number;
+  audioId?: string;
+  duration?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -103,6 +107,15 @@ export interface AudioSource {
   transcriptionText?: string;
   transcriptionStatus: "pending" | "success" | "failed";
   subtitles?: SubtitleSegment[];
+}
+
+export interface AudioAsset {
+  id: string;
+  actorId: string;
+  fileName: string;
+  filePath: string;
+  duration?: number;
+  importedAt: string;
 }
 
 export interface SubtitleSegment {

@@ -59,7 +59,10 @@ export function ChatBubble({
             backgroundRepeat: bubbleStyle.backgroundImageMode === "repeat" ? "repeat" : "no-repeat",
             fontFamily: fonts?.chatFontFamily,
           }}
-          onClick={() => onEditStart(line.id)}
+          onClick={() => {
+            setDraft(line.text);
+            onEditStart(line.id);
+          }}
         >
           {editing ? (
             <textarea
@@ -70,7 +73,7 @@ export function ChatBubble({
               rows={Math.max(2, Math.ceil(draft.length / 26))}
             />
           ) : (
-            <p>{line.text || "空台词"}</p>
+            <p>{line.text || "[未填写台词]"}</p>
           )}
         </div>
         <div className="line-tools" aria-label="台词操作">

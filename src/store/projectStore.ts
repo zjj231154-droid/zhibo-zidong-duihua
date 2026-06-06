@@ -3,6 +3,7 @@ import type {
   Actor,
   ActorPosition,
   AppView,
+  AudioAsset,
   BackgroundSettings,
   BubbleStyle,
   CanvasAspectRatio,
@@ -70,6 +71,10 @@ interface ProjectStore {
   setAutoScroll: (enabled: boolean) => void;
   regenerateSubtitleTimeline: () => void;
   updateSubtitleSegment: (audioId: string, segmentId: string, changes: Partial<SubtitleSegment>) => void;
+  uploadActorAudioAssets: (actorId: string, files: File[]) => Promise<boolean>;
+  addAudioAssetToDialogue: (audioId: string) => string;
+  bindLineAudio: (lineId: string, audioId?: string) => void;
+  moveLine: (lineId: string, direction: "up" | "down") => void;
   updateLineText: (lineId: string, text: string) => void;
   switchLineActor: (lineId: string) => void;
   deleteLine: (lineId: string) => void;
@@ -114,32 +119,35 @@ function createDefaultBackground(): BackgroundSettings {
   };
 }
 
-function createActors(actorNames: string[]): Actor[] {
+function createActors(): Actor[] {
   return [
     {
-      id: id("actor"),
-      name: actorNames[0],
+      id: "walulu",
+      name: "Walulu",
       avatarPath: "",
       position: "left",
       bubbleColor: "#dbeafe",
       textColor: "#1f2937",
       bubbleStyle: createBubbleStyle("#dbeafe"),
+      isDefault: true,
     },
     {
-      id: id("actor"),
-      name: actorNames[1],
+      id: "fufu",
+      name: "Fufu福福",
       avatarPath: "",
       position: "right",
       bubbleColor: "#f1f5f9",
       textColor: "#1f2937",
       bubbleStyle: createBubbleStyle("#f1f5f9"),
+      isDefault: true,
     },
   ];
 }
 
-function createLines(parsedLines: ParsedLine[], actors: Actor[]): ScriptLine[] {
+function createLines(parsedLines: ParsedLine[], actors: Actor[], parsedActors: string[]): ScriptLine[] {
   return parsedLines.map((line, index) => {
-    const speaker = actors.find((actor) => actor.name === line.speakerName) ?? actors[0];
+    const parsedActorIndex = parsedActors.findIndex((name) => name === line.speakerName);
+    const speaker = actors.find((actor) => actor.name === line.speakerName) ?? actors[parsedActorIndex] ?? actors[0];
     return {
       id: id("line"),
       speakerId: speaker.id,
@@ -154,6 +162,30 @@ function createLines(parsedLines: ParsedLine[], actors: Actor[]): ScriptLine[] {
 
 function reorder(lines: ScriptLine[]): ScriptLine[] {
   return lines.map((line, index) => ({ ...line, order: index + 1, updatedAt: now() }));
+}
+
+function sortAudioFiles(files: File[]): File[] {
+  return [...files].sort((first, second) =>
+    first.name.localeCompare(second.name, undefined, { numeric: true, sensitivity: "base" }),
+  );
+}
+
+async function createAudioAsset(actorId: string, file: File): Promise<AudioAsset> {
+  const filePath = await readFileAsDataUrl(file);
+  let duration: number | undefined;
+  try {
+    duration = await readAudioDuration(filePath);
+  } catch {
+    duration = undefined;
+  }
+  return {
+    id: id("audio"),
+    actorId,
+    fileName: file.name,
+    filePath,
+    duration,
+    importedAt: now(),
+  };
 }
 
 function withProjectUpdate(project: Project, updater: (project: Project) => Project): Project {
@@ -190,6 +222,7 @@ function normalizeProject(project: Project): Project {
       },
     },
     audioSources: migrated.audioSources ?? [],
+    audioAssets: migrated.audioAssets ?? [],
   };
 }
 
@@ -254,9 +287,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return false;
     }
 
-    const actors = createActors(result.actors);
+    const actors = createActors();
     const createdAt = now();
-    const lines = createLines(result.lines, actors);
+    const lines = createLines(result.lines, actors, result.actors);
     const pendingAudio = get().pendingAudioSource;
     const audioSources = pendingAudio
       ? [
@@ -290,6 +323,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       },
       theme: createDefaultTheme(),
       audioSources,
+      audioAssets: audioSources.map((audio) => ({
+        id: audio.id,
+        actorId: lines[0]?.speakerId ?? actors[0].id,
+        fileName: audio.fileName,
+        filePath: audio.filePath ?? "",
+        duration: audio.duration,
+        importedAt: audio.importedAt,
+      })),
     };
 
     set({
@@ -519,7 +560,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (!project) return;
     const currentAudio =
       project.audioSources?.find((audio) => audio.id === project.playback.currentAudioId) ?? project.audioSources?.[0];
-    if (mode === "audio" && !currentAudio?.filePath) {
+    const hasLineAudio = project.lines.some((line) =>
+      project.audioAssets?.some((audio) => audio.id === line.audioId && audio.filePath),
+    );
+    if (mode === "audio" && !currentAudio?.filePath && !hasLineAudio) {
       set({ errorMessage: "当前项目未上传音频，请先上传音频后再使用音频同步播放。" });
       return;
     }
@@ -578,6 +622,85 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({
       project: nextProject,
       errorMessage: errors.join(" "),
+    });
+  },
+  uploadActorAudioAssets: async (actorId, files) => {
+    const project = get().project;
+    if (!project || files.length === 0) return false;
+    const sortedFiles = sortAudioFiles(files);
+    const errors = sortedFiles.flatMap((file) => validateAudioFile(file));
+    if (errors.length > 0) {
+      set({ errorMessage: Array.from(new Set(errors)).join(" ") });
+      return false;
+    }
+    const assets = await Promise.all(sortedFiles.map((file) => createAudioAsset(actorId, file)));
+    set({
+      errorMessage: "",
+      lastMessage: `已上传 ${assets.length} 个角色音频。`,
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        audioAssets: [...(current.audioAssets ?? []), ...assets],
+      })),
+    });
+    return true;
+  },
+  addAudioAssetToDialogue: (audioId) => {
+    const project = get().project;
+    if (!project) return "";
+    const audio = project.audioAssets?.find((item) => item.id === audioId);
+    if (!audio) return "";
+    const newLine: ScriptLine = {
+      id: id("line"),
+      speakerId: audio.actorId,
+      text: "",
+      type: "dialogue",
+      order: project.lines.length + 1,
+      audioId: audio.id,
+      duration: audio.duration,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    set({
+      currentIndex: project.lines.length,
+      errorMessage: "",
+      lastMessage: "已添加到对话排序列表。",
+      project: withProjectUpdate(project, (current) => ({ ...current, lines: reorder([...current.lines, newLine]) })),
+    });
+    return newLine.id;
+  },
+  bindLineAudio: (lineId, audioId) => {
+    const project = get().project;
+    if (!project) return;
+    const audio = project.audioAssets?.find((item) => item.id === audioId);
+    set({
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        lines: current.lines.map((line) =>
+          line.id === lineId
+            ? {
+                ...line,
+                speakerId: audio?.actorId ?? line.speakerId,
+                audioId,
+                duration: audio?.duration,
+                updatedAt: now(),
+              }
+            : line,
+        ),
+      })),
+    });
+  },
+  moveLine: (lineId, direction) => {
+    const project = get().project;
+    if (!project) return;
+    const lines = [...project.lines];
+    const index = lines.findIndex((line) => line.id === lineId);
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || targetIndex < 0 || targetIndex >= lines.length) return;
+    const [line] = lines.splice(index, 1);
+    lines.splice(targetIndex, 0, line);
+    set({
+      currentIndex: targetIndex,
+      project: withProjectUpdate(project, (current) => ({ ...current, lines: reorder(lines) })),
     });
   },
   updateLineText: (lineId, text) => {
@@ -650,6 +773,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const newLine: ScriptLine = {
       ...project.lines[targetIndex],
       id: id("line"),
+      audioId: undefined,
+      duration: undefined,
       createdAt: now(),
       updatedAt: now(),
     };

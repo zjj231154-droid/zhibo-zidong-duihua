@@ -1,4 +1,4 @@
-import type { Actor, BackgroundSettings, BubbleStyle, Project } from "../types/project";
+import type { Actor, AudioAsset, BackgroundSettings, BubbleStyle, Project, ScriptLine } from "../types/project";
 
 function defaultBackground(): BackgroundSettings {
   return { fit: "cover", opacity: 100, blur: 0 };
@@ -17,6 +17,15 @@ function defaultBubbleStyle(actor: Partial<Actor>): BubbleStyle {
   };
 }
 
+function uniqueAudioAssets(assets: AudioAsset[]): AudioAsset[] {
+  const seen = new Set<string>();
+  return assets.filter((asset) => {
+    if (seen.has(asset.id)) return false;
+    seen.add(asset.id);
+    return true;
+  });
+}
+
 export function migrateProjectToLatest(project: Partial<Project>): Project {
   const actors = (project.actors ?? []).map((actor) => {
     const bubbleStyle = defaultBubbleStyle(actor);
@@ -30,10 +39,36 @@ export function migrateProjectToLatest(project: Partial<Project>): Project {
     };
   });
 
+  const migratedAudioAssets = uniqueAudioAssets([
+    ...(project.audioAssets ?? []),
+    ...(project.audioSources ?? [])
+      .filter((audio) => audio.filePath)
+      .map((audio) => {
+        const segment = audio.subtitles?.[0];
+        return {
+          id: audio.id,
+          actorId: segment?.speakerId ?? actors[0]?.id ?? "unknown",
+          fileName: audio.fileName,
+          filePath: audio.filePath ?? "",
+          duration: audio.duration,
+          importedAt: audio.importedAt,
+        };
+      }),
+  ]);
+
+  const lines = (project.lines ?? []).map((line) => {
+    const migratedAudio = project.audioSources?.find((audio) => audio.subtitles?.some((segment) => segment.lineId === line.id));
+    return {
+      ...line,
+      audioId: line.audioId ?? migratedAudio?.id,
+      duration: line.duration ?? migratedAudio?.duration,
+    };
+  }) as ScriptLine[];
+
   return {
     ...project,
     actors,
-    lines: project.lines ?? [],
+    lines,
     playback: {
       speed: project.playback?.speed ?? 1,
       currentLineId: project.playback?.currentLineId,
@@ -59,5 +94,6 @@ export function migrateProjectToLatest(project: Partial<Project>): Project {
       transcriptionStatus: audio.transcriptionStatus ?? "pending",
       subtitles: audio.subtitles ?? [],
     })),
+    audioAssets: migratedAudioAssets,
   } as Project;
 }

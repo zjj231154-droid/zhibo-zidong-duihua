@@ -14,13 +14,13 @@ export function NewProjectPage() {
         <h1>新建项目</h1>
         <label className="field">
           项目名称
-          <input
-            value={projectName}
-            maxLength={50}
-            placeholder="例如：直播间毛绒玩具话术"
-            onChange={(event) => setProjectName(event.target.value)}
-          />
+          <input value={projectName} maxLength={50} placeholder="例如：直播间双人对话" onChange={(event) => setProjectName(event.target.value)} />
         </label>
+        <div className="hint-box">
+          系统已为你创建默认演员：
+          {"\n"}Walulu
+          {"\n"}Fufu福福
+        </div>
         <label className="field">
           项目类型
           <input value="双人对话" disabled />

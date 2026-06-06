@@ -1,6 +1,6 @@
 const maxAudioSize = 100 * 1024 * 1024;
 
-export const supportedAudioExtensions = ["mp3", "wav", "m4a", "webm", "ogg", "flac"];
+export const supportedAudioExtensions = ["mp3", "wav", "m4a", "aac", "ogg", "webm", "flac"];
 export const supportedImageExtensions = ["png", "jpg", "jpeg", "webp", "gif"];
 export const supportedBubbleExtensions = ["png", "jpg", "jpeg", "webp", "svg"];
 export const supportedFontExtensions = ["ttf", "otf", "woff", "woff2"];
@@ -14,7 +14,7 @@ export function validateAudioFile(file?: File): string[] {
   if (!file || file.size === 0) errors.push("音频文件为空。");
   if (!file) return errors;
   if (!supportedAudioExtensions.includes(getFileExtension(file))) {
-    errors.push("暂不支持该音频格式，请上传 mp3、wav、m4a、webm、ogg 或 flac 文件。");
+    errors.push("该音频格式暂不支持，请上传 mp3、wav、m4a、aac 或 ogg 格式。");
   }
   if (file.size > maxAudioSize) {
     errors.push("音频文件过大，请上传 100MB 以内的音频文件。");
@@ -55,7 +55,7 @@ export function readAudioDuration(src: string): Promise<number> {
     };
     audio.onerror = () => {
       audio.remove();
-      reject(new Error("未能读取音频时长，已切换为文字播放模式。"));
+      reject(new Error("未能读取音频时长。"));
     };
     audio.src = src;
   });

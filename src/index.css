@@ -428,7 +428,7 @@ p {
 
 .player-layout {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(340px, 430px) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -477,6 +477,97 @@ p {
   overflow: auto;
   border-right: 1px solid #d9e2ec;
   background: #f8fbfd;
+}
+
+.audio-management-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  border-right: 1px solid #d9e2ec;
+  background: #f8fbfd;
+}
+
+.actor-audio-grid,
+.audio-asset-list,
+.dialogue-order-list {
+  display: grid;
+  gap: 10px;
+}
+
+.actor-audio-card,
+.dialogue-order-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: white;
+}
+
+.actor-audio-header,
+.audio-asset-row,
+.dialogue-order-row,
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actor-audio-header {
+  justify-content: space-between;
+}
+
+.file-button.compact {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.audio-asset-row {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fbfdff;
+}
+
+.audio-asset-row span,
+.dialogue-order-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-asset-row span {
+  flex: 1 1 auto;
+}
+
+.audio-asset-row em,
+.dialogue-order-row em {
+  color: #6b7889;
+  font-style: normal;
+  font-size: 12px;
+}
+
+.dialogue-order-row {
+  display: grid;
+  grid-template-columns: 28px 74px minmax(90px, 1fr) minmax(120px, 1fr) 48px auto;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fbfdff;
+}
+
+.dialogue-order-row select {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid #cbd7e3;
+  border-radius: 6px;
+  background: white;
 }
 
 .script-item {
@@ -843,6 +934,22 @@ p {
     max-height: 220px;
     border-right: 0;
     border-bottom: 1px solid #d9e2ec;
+  }
+
+  .audio-management-panel {
+    max-height: 360px;
+    border-right: 0;
+    border-bottom: 1px solid #d9e2ec;
+  }
+
+  .dialogue-order-row {
+    grid-template-columns: 28px 1fr;
+  }
+
+  .dialogue-order-row select,
+  .dialogue-order-row em,
+  .dialogue-order-row .row-actions {
+    grid-column: 2;
   }
 
   .chat-window {
