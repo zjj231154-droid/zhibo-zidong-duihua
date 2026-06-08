@@ -81,6 +81,8 @@ interface ProjectStore {
   addAudioAssetToDialogue: (audioId: string) => string;
   bindLineAudio: (lineId: string, audioId?: string) => void;
   moveLine: (lineId: string, direction: "up" | "down") => void;
+  reorderLineTo: (lineId: string, targetIndex: number) => void;
+  sortDialogueLines: (mode: "fileName" | "uploadTime" | "alternateActors") => void;
   updateLineText: (lineId: string, text: string) => void;
   switchLineActor: (lineId: string) => void;
   deleteLine: (lineId: string) => void;
@@ -880,6 +882,26 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   generateDialogueFromAudioAssets: () => {
     const project = get().project;
     if (!project) return false;
+    if (project.lines.length > 0) {
+      set({
+        currentIndex: 0,
+        errorMessage: "",
+        lastMessage: "已按整理后的顺序生成对话界面。",
+        project: withProjectUpdate(project, (current) => ({
+          ...current,
+          lines: reorder(current.lines),
+          playback: {
+            ...current.playback,
+            mode: "audio",
+            currentLineId: current.lines[0]?.id,
+          },
+          originalScript: reorder(current.lines)
+            .map((line) => `${current.actors.find((actor) => actor.id === line.speakerId)?.name ?? "Actor"}：${line.text}`)
+            .join("\n"),
+        })),
+      });
+      return true;
+    }
     const assets = [...(project.audioAssets ?? [])].sort((first, second) => {
       const firstOrder = first.detectedOrder ?? first.uploadOrder ?? 0;
       const secondOrder = second.detectedOrder ?? second.uploadOrder ?? 0;
@@ -980,6 +1002,90 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     lines.splice(targetIndex, 0, line);
     set({
       currentIndex: targetIndex,
+      project: withProjectUpdate(project, (current) => ({ ...current, lines: reorder(lines) })),
+    });
+  },
+  reorderLineTo: (lineId, targetIndex) => {
+    const project = get().project;
+    if (!project) return;
+    const lines = [...project.lines];
+    const index = lines.findIndex((line) => line.id === lineId);
+    const boundedTarget = Math.max(0, Math.min(targetIndex, lines.length - 1));
+    if (index < 0 || index === boundedTarget) return;
+    const [line] = lines.splice(index, 1);
+    lines.splice(boundedTarget, 0, line);
+    set({
+      currentIndex: boundedTarget,
+      lastMessage: "对话顺序已调整。",
+      project: withProjectUpdate(project, (current) => ({ ...current, lines: reorder(lines) })),
+    });
+  },
+  sortDialogueLines: (mode) => {
+    const project = get().project;
+    if (!project) return;
+    const audioAssets = project.audioAssets ?? [];
+    const getAudio = (line: ScriptLine) => audioAssets.find((audio) => audio.id === line.audioId);
+    let lines = [...project.lines];
+    if (lines.length === 0 && audioAssets.length > 0) {
+      lines = audioAssets.map((audio, index) => ({
+        id: id("line"),
+        speakerId: audio.actorId,
+        text: audio.transcriptionText?.trim() || "[未识别文字]",
+        type: "dialogue",
+        order: index + 1,
+        audioId: audio.id,
+        duration: audio.duration,
+        source: "audio_transcription",
+        isEdited: false,
+        createdAt: now(),
+        updatedAt: now(),
+      }));
+    }
+
+    if (mode === "alternateActors") {
+      const byActor = project.actors.map((actor) =>
+        lines
+          .filter((line) => line.speakerId === actor.id)
+          .sort((first, second) => {
+            const firstAudio = getAudio(first);
+            const secondAudio = getAudio(second);
+            return (firstAudio?.detectedOrder ?? first.order) - (secondAudio?.detectedOrder ?? second.order);
+          }),
+      );
+      const sorted: ScriptLine[] = [];
+      const maxLength = Math.max(...byActor.map((items) => items.length), 0);
+      for (let index = 0; index < maxLength; index += 1) {
+        for (const actorLines of byActor) {
+          const line = actorLines[index];
+          if (line) sorted.push(line);
+        }
+      }
+      lines = sorted;
+    } else {
+      lines.sort((first, second) => {
+        const firstAudio = getAudio(first);
+        const secondAudio = getAudio(second);
+        if (mode === "uploadTime") {
+          return (firstAudio?.uploadOrder ?? first.order) - (secondAudio?.uploadOrder ?? second.order);
+        }
+        const firstOrder = firstAudio?.detectedOrder ?? firstAudio?.uploadOrder ?? first.order;
+        const secondOrder = secondAudio?.detectedOrder ?? secondAudio?.uploadOrder ?? second.order;
+        if (firstOrder !== secondOrder) return firstOrder - secondOrder;
+        return (firstAudio?.fileName ?? "").localeCompare(secondAudio?.fileName ?? "", undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      });
+    }
+
+    set({
+      currentIndex: lines.length > 0 ? 0 : -1,
+      lastMessage:
+        mode === "fileName"
+          ? "已按文件名数字排序。"
+          : mode === "uploadTime"
+            ? "已按上传时间排序。"
+            : "已按演员交替排序。",
       project: withProjectUpdate(project, (current) => ({ ...current, lines: reorder(lines) })),
     });
   },

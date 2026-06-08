@@ -1,4 +1,17 @@
-import { ArrowDown, ArrowLeft, ArrowRight, FileAudio, ListPlus, Play, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  FileAudio,
+  ListPlus,
+  Play,
+  RefreshCw,
+  Save,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import type { Actor, AudioAsset, ScriptLine } from "../types/project";
 import { useProjectStore } from "../store/projectStore";
 
@@ -135,30 +148,38 @@ function ActorAudioWindow({
   );
 }
 
-interface DialogueOrderTableProps {
+interface DialogueOrderWorkbenchProps {
   actors: Actor[];
   audioAssets: AudioAsset[];
   lines: ScriptLine[];
+  selectedLineId: string;
+  onSelectLine: (lineId: string) => void;
   onMoveLine: (lineId: string, direction: "up" | "down") => void;
+  onReorderLineTo: (lineId: string, targetIndex: number) => void;
   onSwitchActor: (lineId: string) => void;
   onUpdateText: (lineId: string, text: string) => void;
   onDeleteLine: (lineId: string) => void;
 }
 
-function DialogueOrderTable({
+function DialogueOrderWorkbench({
   actors,
   audioAssets,
   lines,
+  selectedLineId,
+  onSelectLine,
   onMoveLine,
+  onReorderLineTo,
   onSwitchActor,
   onUpdateText,
   onDeleteLine,
-}: DialogueOrderTableProps) {
+}: DialogueOrderWorkbenchProps) {
+  const [draggingLineId, setDraggingLineId] = useState("");
+
   return (
     <section className="dialogue-workbench">
-      <div className="section-title">对话排序列表</div>
+      <div className="section-title">整理对话顺序</div>
       {lines.length === 0 ? (
-        <div className="empty-state compact">生成对话后，这里会决定最终播放顺序。</div>
+        <div className="empty-state compact">点击“整理对话顺序”或自动排序后，这里会显示最终播放顺序。</div>
       ) : (
         <div className="dialogue-table">
           <div className="dialogue-table-head">
@@ -173,9 +194,30 @@ function DialogueOrderTable({
           {lines.map((line, index) => {
             const actor = actors.find((item) => item.id === line.speakerId);
             const audio = audioAssets.find((item) => item.id === line.audioId);
+            const isSelected = selectedLineId === line.id;
             return (
-              <div className="dialogue-table-row" key={line.id}>
-                <strong>{index + 1}</strong>
+              <div
+                className={`dialogue-table-row order-row ${isSelected ? "selected-order-row" : ""}`}
+                draggable
+                key={line.id}
+                onClick={() => onSelectLine(line.id)}
+                onDragStart={() => setDraggingLineId(line.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (draggingLineId) onReorderLineTo(draggingLineId, index);
+                  setDraggingLineId("");
+                }}
+              >
+                <input
+                  aria-label="手动序号"
+                  className="order-number-input"
+                  min={1}
+                  max={lines.length}
+                  type="number"
+                  value={index + 1}
+                  onChange={(event) => onReorderLineTo(line.id, Number(event.target.value) - 1)}
+                />
                 <span>{actor?.name ?? "未知演员"}</span>
                 <span title={audio?.fileName}>{audio?.fileName ?? "未绑定音频"}</span>
                 <input value={line.text} onChange={(event) => onUpdateText(line.id, event.target.value)} />
@@ -183,7 +225,7 @@ function DialogueOrderTable({
                 <span>{line.isEdited ? "已编辑" : statusLabels[audio?.transcriptionStatus ?? "pending"]}</span>
                 <div className="row-actions">
                   <button type="button" className="icon-button" title="上移" onClick={() => onMoveLine(line.id, "up")}>
-                    <ArrowUpIcon />
+                    <ArrowUp size={15} />
                   </button>
                   <button type="button" className="icon-button" title="下移" onClick={() => onMoveLine(line.id, "down")}>
                     <ArrowDown size={15} />
@@ -191,7 +233,13 @@ function DialogueOrderTable({
                   <button type="button" className="ghost-button" onClick={() => onSwitchActor(line.id)}>
                     切换演员
                   </button>
-                  <button type="button" className="ghost-button danger-text" onClick={() => onDeleteLine(line.id)}>
+                  <button
+                    type="button"
+                    className="ghost-button danger-text"
+                    onClick={() => {
+                      if (confirm("是否确认删除该段音频和识别文字？")) onDeleteLine(line.id);
+                    }}
+                  >
                     删除
                   </button>
                 </div>
@@ -204,8 +252,55 @@ function DialogueOrderTable({
   );
 }
 
-function ArrowUpIcon() {
-  return <ArrowDown size={15} className="rotate-180" />;
+interface DialogueDetailPanelProps {
+  actors: Actor[];
+  audio?: AudioAsset;
+  line?: ScriptLine;
+  onUpdateText: (lineId: string, text: string) => void;
+  onSwitchActor: (lineId: string) => void;
+}
+
+function DialogueDetailPanel({ actors, audio, line, onUpdateText, onSwitchActor }: DialogueDetailPanelProps) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const actor = actors.find((item) => item.id === line?.speakerId);
+
+  return (
+    <aside className="order-detail-panel">
+      <div className="section-title">当前选中音频详情</div>
+      {!line ? (
+        <div className="empty-state compact">选择一条对话后，可以在这里播放单段、编辑文字和切换演员。</div>
+      ) : (
+        <div className="order-detail-content">
+          <div className="detail-field">
+            <span>演员</span>
+            <strong>{actor?.name ?? "未知演员"}</strong>
+          </div>
+          <div className="detail-field">
+            <span>音频</span>
+            <strong>{audio?.fileName ?? "未绑定音频"}</strong>
+          </div>
+          <div className="detail-field">
+            <span>状态</span>
+            <strong>{line.isEdited ? "已编辑" : statusLabels[audio?.transcriptionStatus ?? "pending"]}</strong>
+          </div>
+          {audio?.filePath && <audio ref={audioRef} controls src={audio.filePath} />}
+          <label className="field compact-field">
+            识别文字
+            <textarea value={line.text} onChange={(event) => onUpdateText(line.id, event.target.value)} />
+          </label>
+          <div className="audio-card-actions">
+            <button type="button" className="ghost-button" onClick={() => void audioRef.current?.play()}>
+              <Play size={15} />
+              播放本段
+            </button>
+            <button type="button" className="ghost-button" onClick={() => onSwitchActor(line.id)}>
+              切换演员
+            </button>
+          </div>
+        </div>
+      )}
+    </aside>
+  );
 }
 
 export function AudioTranscriptionPage() {
@@ -223,43 +318,73 @@ export function AudioTranscriptionPage() {
     generateDialogueFromAudioAssets,
     addAudioAssetToDialogue,
     moveLine,
+    reorderLineTo,
+    sortDialogueLines,
     switchLineActor,
     updateLineText,
     deleteLine,
   } = useProjectStore();
+  const [selectedLineId, setSelectedLineId] = useState("");
+
+  const actors = project?.actors.slice(0, 2) ?? [];
+  const audioAssets = useMemo(() => project?.audioAssets ?? [], [project?.audioAssets]);
+  const selectedLine = project?.lines.find((line) => line.id === selectedLineId) ?? project?.lines[0];
+  const selectedAudio = audioAssets.find((audio) => audio.id === selectedLine?.audioId);
 
   if (!project) return null;
+  const currentProject = project;
 
-  const actors = project.actors.slice(0, 2);
-  const audioAssets = project.audioAssets ?? [];
+  function prepareOrderList() {
+    if (currentProject.audioAssets?.some((audio) => audio.transcriptionStatus !== "completed")) {
+      const shouldContinue = confirm("仍有音频未完成识别，是否继续整理对话顺序？未识别内容会显示为 [未识别文字]。");
+      if (!shouldContinue) return;
+    }
+    generateDialogueFromAudioAssets();
+  }
+
+  function openPlayer() {
+    if (currentProject.lines.length === 0) {
+      prepareOrderList();
+    }
+    saveCurrentProject().then(() => setView("player"));
+  }
 
   return (
     <main className="audio-transcription-screen">
       <header className="audio-page-header">
         <button type="button" className="link-button" onClick={() => setView("new-project")}>
           <ArrowLeft size={17} />
-          返回项目设置
+          返回上传音频
         </button>
         <div>
-          <h1>音频识别与对话整理</h1>
+          <h1>整理对话顺序</h1>
           <p>{project.name}</p>
         </div>
         <div className="audio-header-actions">
           <button type="button" className="ghost-button" onClick={() => void transcribeAllAudioAssets()}>
             <RefreshCw size={16} />
-            识别全部音频
+            重新识别全部
           </button>
-          <button type="button" className="ghost-button" onClick={generateDialogueFromAudioAssets}>
+          <button type="button" className="ghost-button" onClick={prepareOrderList}>
             <ListPlus size={16} />
-            生成对话
+            整理对话顺序
+          </button>
+          <button type="button" className="ghost-button" onClick={() => sortDialogueLines("fileName")}>
+            按文件名排序
+          </button>
+          <button type="button" className="ghost-button" onClick={() => sortDialogueLines("uploadTime")}>
+            按上传时间排序
+          </button>
+          <button type="button" className="ghost-button" onClick={() => sortDialogueLines("alternateActors")}>
+            演员交替排序
           </button>
           <button type="button" className="ghost-button" onClick={() => void saveCurrentProject()}>
             <Save size={16} />
-            保存
+            保存顺序
           </button>
-          <button type="button" className="primary-button" onClick={() => setView("player")}>
+          <button type="button" className="primary-button" onClick={openPlayer}>
             <Play size={16} />
-            进入播放
+            生成对话界面
             <ArrowRight size={16} />
           </button>
         </div>
@@ -283,15 +408,27 @@ export function AudioTranscriptionPage() {
         ))}
       </section>
 
-      <DialogueOrderTable
-        actors={project.actors}
-        audioAssets={audioAssets}
-        lines={project.lines}
-        onMoveLine={moveLine}
-        onSwitchActor={switchLineActor}
-        onUpdateText={updateLineText}
-        onDeleteLine={deleteLine}
-      />
+      <section className="order-layout">
+        <DialogueOrderWorkbench
+          actors={project.actors}
+          audioAssets={audioAssets}
+          lines={project.lines}
+          selectedLineId={selectedLine?.id ?? ""}
+          onSelectLine={setSelectedLineId}
+          onMoveLine={moveLine}
+          onReorderLineTo={reorderLineTo}
+          onSwitchActor={switchLineActor}
+          onUpdateText={updateLineText}
+          onDeleteLine={deleteLine}
+        />
+        <DialogueDetailPanel
+          actors={project.actors}
+          audio={selectedAudio}
+          line={selectedLine}
+          onUpdateText={updateLineText}
+          onSwitchActor={switchLineActor}
+        />
+      </section>
     </main>
   );
 }
