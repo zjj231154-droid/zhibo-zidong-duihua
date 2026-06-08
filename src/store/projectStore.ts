@@ -50,6 +50,7 @@ interface ProjectStore {
   setRawScript: (script: string) => void;
   startNewProject: () => void;
   validateAndGoToImport: () => boolean;
+  validateAndGoToAudioTranscription: () => boolean;
   parseCurrentScript: () => boolean;
   transcribeCurrentAudio: (file?: File) => Promise<boolean>;
   confirmTranscriptionText: (text: string) => boolean;
@@ -72,6 +73,11 @@ interface ProjectStore {
   regenerateSubtitleTimeline: () => void;
   updateSubtitleSegment: (audioId: string, segmentId: string, changes: Partial<SubtitleSegment>) => void;
   uploadActorAudioAssets: (actorId: string, files: File[]) => Promise<boolean>;
+  transcribeAudioAsset: (audioId: string) => Promise<boolean>;
+  transcribeAllAudioAssets: () => Promise<boolean>;
+  updateAudioAssetTranscription: (audioId: string, text: string) => void;
+  deleteAudioAsset: (audioId: string) => void;
+  generateDialogueFromAudioAssets: () => boolean;
   addAudioAssetToDialogue: (audioId: string) => string;
   bindLineAudio: (lineId: string, audioId?: string) => void;
   moveLine: (lineId: string, direction: "up" | "down") => void;
@@ -170,7 +176,21 @@ function sortAudioFiles(files: File[]): File[] {
   );
 }
 
-async function createAudioAsset(actorId: string, file: File): Promise<AudioAsset> {
+function detectOrderFromFileName(fileName: string, fallback: number): number {
+  const match = fileName.match(/\d+/);
+  return match ? Number(match[0]) : fallback;
+}
+
+function normalizeTranscriptionText(text: string, fallbackActorName: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const firstLine = trimmed.split(/\r?\n/).find(Boolean) ?? trimmed;
+  const colonIndex = firstLine.search(/[：:]/);
+  if (colonIndex >= 0) return firstLine.slice(colonIndex + 1).trim() || firstLine.trim();
+  return firstLine.replace(new RegExp(`^${fallbackActorName}\\s*`), "").trim();
+}
+
+async function createAudioAsset(actorId: string, file: File, uploadOrder: number): Promise<AudioAsset> {
   const filePath = await readFileAsDataUrl(file);
   let duration: number | undefined;
   try {
@@ -183,7 +203,13 @@ async function createAudioAsset(actorId: string, file: File): Promise<AudioAsset
     actorId,
     fileName: file.name,
     filePath,
+    fileType: file.name.toLowerCase().split(".").pop() ?? "",
+    fileSize: file.size,
     duration,
+    uploadOrder,
+    detectedOrder: detectOrderFromFileName(file.name, uploadOrder),
+    transcriptionStatus: "pending",
+    transcriptionText: "",
     importedAt: now(),
   };
 }
@@ -222,7 +248,15 @@ function normalizeProject(project: Project): Project {
       },
     },
     audioSources: migrated.audioSources ?? [],
-    audioAssets: migrated.audioAssets ?? [],
+    audioAssets: (migrated.audioAssets ?? []).map((audio, index) => ({
+      ...audio,
+      fileType: audio.fileType ?? audio.fileName.toLowerCase().split(".").pop() ?? "",
+      fileSize: audio.fileSize,
+      uploadOrder: audio.uploadOrder ?? index + 1,
+      detectedOrder: audio.detectedOrder ?? detectOrderFromFileName(audio.fileName, index + 1),
+      transcriptionStatus: audio.transcriptionStatus ?? (audio.transcriptionText ? "completed" : "pending"),
+      transcriptionText: audio.transcriptionText ?? "",
+    })),
   };
 }
 
@@ -272,6 +306,49 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return false;
     }
     set({ view: "import-script", errorMessage: "" });
+    return true;
+  },
+  validateAndGoToAudioTranscription: () => {
+    const name = get().projectName.trim();
+    if (!name) {
+      set({ errorMessage: "请输入项目名称。" });
+      return false;
+    }
+    if (name.length > 50) {
+      set({ errorMessage: "项目名称最多 50 个字符。" });
+      return false;
+    }
+    if (invalidFilenameCharacters.test(name)) {
+      set({ errorMessage: "项目名称不能包含系统非法文件名字符。" });
+      return false;
+    }
+    const createdAt = now();
+    const project: Project = {
+      id: id("project"),
+      name,
+      createdAt,
+      updatedAt: createdAt,
+      originalScript: "",
+      actors: createActors(),
+      lines: [],
+      playback: {
+        speed: 1,
+        autoScroll: true,
+        mode: "audio",
+      },
+      theme: createDefaultTheme(),
+      audioSources: [],
+      audioAssets: [],
+    };
+    set({
+      project,
+      view: "audio-transcription",
+      currentIndex: 0,
+      playbackStatus: "idle",
+      errorMessage: "",
+      lastMessage: "已创建音频识别项目。",
+    });
+    void get().saveCurrentProject();
     return true;
   },
   parseCurrentScript: () => {
@@ -627,19 +704,220 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   uploadActorAudioAssets: async (actorId, files) => {
     const project = get().project;
     if (!project || files.length === 0) return false;
+    if (files.length > 50) {
+      set({ errorMessage: "一次最多上传 50 个音频文件。" });
+      return false;
+    }
     const sortedFiles = sortAudioFiles(files);
     const errors = sortedFiles.flatMap((file) => validateAudioFile(file));
     if (errors.length > 0) {
       set({ errorMessage: Array.from(new Set(errors)).join(" ") });
       return false;
     }
-    const assets = await Promise.all(sortedFiles.map((file) => createAudioAsset(actorId, file)));
+    const currentMaxOrder = Math.max(0, ...(project.audioAssets ?? []).map((audio) => audio.uploadOrder ?? 0));
+    const assets = await Promise.all(
+      sortedFiles.map((file, index) => createAudioAsset(actorId, file, currentMaxOrder + index + 1)),
+    );
     set({
       errorMessage: "",
       lastMessage: `已上传 ${assets.length} 个角色音频。`,
       project: withProjectUpdate(project, (current) => ({
         ...current,
         audioAssets: [...(current.audioAssets ?? []), ...assets],
+      })),
+    });
+    return true;
+  },
+  transcribeAudioAsset: async (audioId) => {
+    const project = get().project;
+    const audio = project?.audioAssets?.find((item) => item.id === audioId);
+    if (!project || !audio) return false;
+    if (!audio.filePath) {
+      set({
+        errorMessage: "文件丢失，请重新上传音频。",
+        project: withProjectUpdate(project, (current) => ({
+          ...current,
+          audioAssets: (current.audioAssets ?? []).map((item) =>
+            item.id === audioId
+              ? { ...item, transcriptionStatus: "missing", transcriptionError: "文件丢失，请重新上传音频。" }
+              : item,
+          ),
+        })),
+      });
+      return false;
+    }
+
+    set({
+      errorMessage: "",
+      lastMessage: `正在识别 ${audio.fileName}...`,
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        audioAssets: (current.audioAssets ?? []).map((item) =>
+          item.id === audioId ? { ...item, transcriptionStatus: "transcribing", transcriptionError: "" } : item,
+        ),
+      })),
+    });
+
+    try {
+      const response = await fetch(audio.filePath);
+      const blob = await response.blob();
+      const file = new File([blob], audio.fileName, { type: blob.type || `audio/${audio.fileType ?? "mpeg"}` });
+      const result = await transcribeAudio(file, { mode: "mock", language: "auto" });
+      const latestProject = get().project;
+      const latestAudio = latestProject?.audioAssets?.find((item) => item.id === audioId);
+      const actor = latestProject?.actors.find((item) => item.id === latestAudio?.actorId);
+      if (!latestProject || !latestAudio) return false;
+      if (!result.success) {
+        set({
+          errorMessage: result.errors.join(" "),
+          project: withProjectUpdate(latestProject, (current) => ({
+            ...current,
+            audioAssets: (current.audioAssets ?? []).map((item) =>
+              item.id === audioId
+                ? { ...item, transcriptionStatus: "failed", transcriptionError: result.errors.join(" ") }
+                : item,
+            ),
+          })),
+        });
+        return false;
+      }
+      const transcriptionText = normalizeTranscriptionText(result.fullText, actor?.name ?? "");
+      set({
+        errorMessage: "",
+        lastMessage: `${audio.fileName} 识别完成。`,
+        project: withProjectUpdate(latestProject, (current) => ({
+          ...current,
+          audioAssets: (current.audioAssets ?? []).map((item) =>
+            item.id === audioId
+              ? {
+                  ...item,
+                  transcriptionStatus: transcriptionText ? "completed" : "failed",
+                  transcriptionText: transcriptionText || "[未识别文字]",
+                  transcriptionError: transcriptionText ? "" : "未识别到有效人声，请检查音频内容是否清晰。",
+                }
+              : item,
+          ),
+        })),
+      });
+      return Boolean(transcriptionText);
+    } catch {
+      const latestProject = get().project;
+      if (!latestProject) return false;
+      set({
+        errorMessage: "该音频识别失败，请检查音频是否清晰，或尝试转换为 mp3 / wav 格式后重新上传。",
+        project: withProjectUpdate(latestProject, (current) => ({
+          ...current,
+          audioAssets: (current.audioAssets ?? []).map((item) =>
+            item.id === audioId
+              ? {
+                  ...item,
+                  transcriptionStatus: "failed",
+                  transcriptionError: "该音频识别失败，请检查音频是否清晰，或尝试转换为 mp3 / wav 格式后重新上传。",
+                }
+              : item,
+          ),
+        })),
+      });
+      return false;
+    }
+  },
+  transcribeAllAudioAssets: async () => {
+    const project = get().project;
+    const pendingAssets = (project?.audioAssets ?? []).filter(
+      (audio) => audio.transcriptionStatus !== "completed" && audio.transcriptionStatus !== "unsupported",
+    );
+    if (!project || pendingAssets.length === 0) {
+      set({ lastMessage: "没有需要识别的音频。" });
+      return false;
+    }
+    let successCount = 0;
+    for (const audio of pendingAssets) {
+      if (await get().transcribeAudioAsset(audio.id)) successCount += 1;
+    }
+    set({ lastMessage: `批量识别完成：${successCount} / ${pendingAssets.length} 个音频成功。` });
+    return successCount > 0;
+  },
+  updateAudioAssetTranscription: (audioId, text) => {
+    const project = get().project;
+    if (!project) return;
+    set({
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        audioAssets: (current.audioAssets ?? []).map((audio) =>
+          audio.id === audioId
+            ? {
+                ...audio,
+                transcriptionText: text,
+                transcriptionStatus: text.trim() ? "completed" : "pending",
+                transcriptionError: "",
+              }
+            : audio,
+        ),
+        lines: current.lines.map((line) =>
+          line.audioId === audioId
+            ? { ...line, text: text.trim() || "[未识别文字]", source: "edited", isEdited: true, updatedAt: now() }
+            : line,
+        ),
+      })),
+    });
+  },
+  deleteAudioAsset: (audioId) => {
+    const project = get().project;
+    if (!project) return;
+    set({
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        audioAssets: (current.audioAssets ?? []).filter((audio) => audio.id !== audioId),
+        lines: reorder(
+          current.lines.map((line) =>
+            line.audioId === audioId ? { ...line, audioId: undefined, duration: undefined, updatedAt: now() } : line,
+          ),
+        ),
+      })),
+      lastMessage: "已删除音频素材。",
+    });
+  },
+  generateDialogueFromAudioAssets: () => {
+    const project = get().project;
+    if (!project) return false;
+    const assets = [...(project.audioAssets ?? [])].sort((first, second) => {
+      const firstOrder = first.detectedOrder ?? first.uploadOrder ?? 0;
+      const secondOrder = second.detectedOrder ?? second.uploadOrder ?? 0;
+      if (firstOrder !== secondOrder) return firstOrder - secondOrder;
+      return (first.uploadOrder ?? 0) - (second.uploadOrder ?? 0);
+    });
+    if (assets.length === 0) {
+      set({ errorMessage: "请先上传音频。" });
+      return false;
+    }
+    const createdLines: ScriptLine[] = assets.map((audio, index) => ({
+      id: id("line"),
+      speakerId: audio.actorId,
+      text: audio.transcriptionText?.trim() || "[未识别文字]",
+      type: "dialogue",
+      order: index + 1,
+      audioId: audio.id,
+      duration: audio.duration,
+      source: "audio_transcription",
+      isEdited: false,
+      createdAt: now(),
+      updatedAt: now(),
+    }));
+    set({
+      currentIndex: createdLines.length > 0 ? 0 : -1,
+      errorMessage: "",
+      lastMessage: `已根据 ${createdLines.length} 个音频生成对话排序列表。`,
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        lines: reorder(createdLines),
+        playback: {
+          ...current.playback,
+          mode: "audio",
+          currentLineId: createdLines[0]?.id,
+        },
+        originalScript: createdLines
+          .map((line) => `${current.actors.find((actor) => actor.id === line.speakerId)?.name ?? "Actor"}：${line.text}`)
+          .join("\n"),
       })),
     });
     return true;
@@ -652,11 +930,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const newLine: ScriptLine = {
       id: id("line"),
       speakerId: audio.actorId,
-      text: "",
+      text: audio.transcriptionText?.trim() || "[未识别文字]",
       type: "dialogue",
       order: project.lines.length + 1,
       audioId: audio.id,
       duration: audio.duration,
+      source: "audio_transcription",
+      isEdited: false,
       createdAt: now(),
       updatedAt: now(),
     };
@@ -709,7 +989,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({
       project: withProjectUpdate(project, (current) => ({
         ...current,
-        lines: current.lines.map((line) => (line.id === lineId ? { ...line, text, updatedAt: now() } : line)),
+        lines: current.lines.map((line) =>
+          line.id === lineId ? { ...line, text, source: "edited", isEdited: true, updatedAt: now() } : line,
+        ),
       })),
       lastMessage:
         project.playback.mode === "audio"

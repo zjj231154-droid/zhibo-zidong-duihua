@@ -1,4 +1,5 @@
 import { ActorSetupPage } from "./pages/ActorSetupPage";
+import { AudioTranscriptionPage } from "./pages/AudioTranscriptionPage";
 import { HomePage } from "./pages/HomePage";
 import { ImportScriptPage } from "./pages/ImportScriptPage";
 import { NewProjectPage } from "./pages/NewProjectPage";
@@ -13,6 +14,7 @@ export default function App() {
 
   if (view === "new-project") return <NewProjectPage />;
   if (view === "import-script") return <ImportScriptPage />;
+  if (view === "audio-transcription") return <AudioTranscriptionPage />;
   if (view === "transcription-review") return <TranscriptionReviewPage />;
   if (view === "actor-setup") return <ActorSetupPage />;
   if (view === "theme-setup") return <ThemeSetupPage />;

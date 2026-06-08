@@ -7,6 +7,7 @@ export type AppView =
   | "home"
   | "new-project"
   | "import-script"
+  | "audio-transcription"
   | "transcription-review"
   | "actor-setup"
   | "theme-setup"
@@ -14,6 +15,13 @@ export type AppView =
 export type BackgroundFit = "cover" | "contain" | "repeat" | "center";
 export type BubbleImageMode = "stretch" | "repeat" | "cover";
 export type TranscriptionStatus = "idle" | "uploading" | "transcribing" | "success" | "failed";
+export type AudioAssetTranscriptionStatus =
+  | "pending"
+  | "transcribing"
+  | "completed"
+  | "failed"
+  | "unsupported"
+  | "missing";
 
 export interface Project {
   id: string;
@@ -50,6 +58,8 @@ export interface ScriptLine {
   order: number;
   audioId?: string;
   duration?: number;
+  source?: "manual" | "audio_transcription" | "edited";
+  isEdited?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,7 +124,14 @@ export interface AudioAsset {
   actorId: string;
   fileName: string;
   filePath: string;
+  fileType?: string;
+  fileSize?: number;
   duration?: number;
+  uploadOrder?: number;
+  detectedOrder?: number;
+  transcriptionStatus?: AudioAssetTranscriptionStatus;
+  transcriptionText?: string;
+  transcriptionError?: string;
   importedAt: string;
 }
 
