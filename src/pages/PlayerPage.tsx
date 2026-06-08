@@ -70,6 +70,8 @@ export function PlayerPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [audioTime, setAudioTime] = useState(0);
   const [playbackError, setPlaybackError] = useState("");
+  const [selectedLineId, setSelectedLineId] = useState("");
+  const [actionLineId, setActionLineId] = useState("");
   const timerRef = useRef<number | undefined>(undefined);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -93,6 +95,82 @@ export function PlayerPage() {
   useEffect(() => {
     applyFontSettings(project?.theme.fonts);
   }, [project?.theme.fonts]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      const isEditing = tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT" || target?.isContentEditable;
+      if (isEditing) return;
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveCurrentProject();
+        return;
+      }
+      if (event.key === "Escape") {
+        setActionLineId("");
+        setSelectedLineId("");
+        return;
+      }
+      if (event.key === " ") {
+        event.preventDefault();
+        if (playbackStatus === "playing") pause();
+        else play();
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        goNext();
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goPrevious();
+        return;
+      }
+      if (event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        replayCurrentLine();
+        return;
+      }
+      if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        stopPlayback();
+        return;
+      }
+      if (!selectedLineId) return;
+      if (event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        beginEditLine(selectedLineId);
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        deleteSelectedLine(selectedLineId);
+        return;
+      }
+      if (event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        pause();
+        switchLineActor(selectedLineId);
+        return;
+      }
+      if (event.key.toLowerCase() === "u") {
+        event.preventDefault();
+        focusAudioManagement();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        duplicateLine(selectedLineId);
+        return;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   useEffect(() => {
     if (!project || project.playback.mode !== "text" || playbackStatus !== "playing") return;
@@ -225,6 +303,7 @@ export function PlayerPage() {
   }
 
   function play() {
+    setActionLineId("");
     if (activeProject.playback.mode === "audio") {
       if (!currentLineAudio?.filePath && !currentAudio?.filePath && !hasOrderedAudio) {
         setPlaybackMode("audio");
@@ -292,6 +371,58 @@ export function PlayerPage() {
     }
   }
 
+  function selectLine(lineId: string) {
+    setSelectedLineId(lineId);
+    const index = activeProject.lines.findIndex((line) => line.id === lineId);
+    if (index >= 0) setCurrentIndex(index);
+  }
+
+  function playLine(lineId: string) {
+    selectLine(lineId);
+    setActionLineId("");
+    setPlaybackStatus("playing");
+  }
+
+  function replayCurrentLine() {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      setAudioTime(0);
+    }
+    setPlaybackStatus("playing");
+  }
+
+  function stopPlayback() {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setAudioTime(0);
+    }
+    setPlaybackStatus("idle");
+  }
+
+  function beginEditLine(lineId: string) {
+    pause();
+    selectLine(lineId);
+    setActionLineId("");
+    setEditingLineId(lineId);
+  }
+
+  function deleteSelectedLine(lineId: string) {
+    pause();
+    if (!confirm("确定删除这条台词吗？")) return;
+    const lineIndex = activeProject.lines.findIndex((line) => line.id === lineId);
+    deleteLine(lineId);
+    setActionLineId("");
+    const nextLine = activeProject.lines[lineIndex + 1] ?? activeProject.lines[lineIndex - 1];
+    setSelectedLineId(nextLine?.id ?? "");
+  }
+
+  function focusAudioManagement() {
+    pause();
+    setActionLineId("");
+    document.querySelector(".audio-management-panel")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
   function exportFile(format: "txt" | "md" | "json") {
     const safeName = activeProject.name.replace(/[<>:"/\\|?*]/g, "_");
     if (format === "txt") downloadTextFile(exportProjectAsTxt(activeProject), `${safeName}.txt`, "text/plain");
@@ -307,7 +438,7 @@ export function PlayerPage() {
   }
 
   return (
-    <main className="player-screen">
+    <main className="player-screen" onClick={() => setActionLineId("")}>
       <ProjectHeader
         projectName={project.name}
         onHome={() => setView("home")}
@@ -376,22 +507,41 @@ export function PlayerPage() {
                       actor={actor}
                       fonts={project.theme.fonts}
                       isActive={index === currentIndex}
+                      isSelected={line.id === selectedLineId}
+                      actionsOpen={line.id === actionLineId}
                       editing={editingLineId === line.id}
-                      onEditStart={setEditingLineId}
+                      onSelect={selectLine}
+                      onOpenActions={setActionLineId}
+                      onPlayLine={playLine}
+                      onEditStart={beginEditLine}
                       onEdit={(lineId, text) => {
                         updateLineText(lineId, text);
                         setEditingLineId("");
                         void saveCurrentProject();
                       }}
-                      onDelete={(lineId) => confirm("确定删除这条台词吗？") && deleteLine(lineId)}
-                      onSwitchActor={switchLineActor}
+                      onDelete={deleteSelectedLine}
+                      onSwitchActor={(lineId) => {
+                        pause();
+                        switchLineActor(lineId);
+                        setActionLineId("");
+                      }}
+                      onMove={(lineId, direction) => {
+                        pause();
+                        moveLine(lineId, direction);
+                        setActionLineId("");
+                      }}
+                      onReplaceAudio={() => focusAudioManagement()}
                       onAdd={(lineId, placement) => {
+                        pause();
                         const newLineId = addLine(lineId, placement);
                         if (newLineId) setEditingLineId(newLineId);
+                        setActionLineId("");
                       }}
                       onDuplicate={(lineId) => {
+                        pause();
                         const newLineId = duplicateLine(lineId);
                         if (newLineId) setEditingLineId(newLineId);
+                        setActionLineId("");
                       }}
                     />
                   );

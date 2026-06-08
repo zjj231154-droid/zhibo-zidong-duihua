@@ -645,6 +645,30 @@ p {
 .bubble-row.active .bubble {
   border-color: #149184;
   box-shadow: 0 0 0 4px rgba(20, 145, 132, 0.12);
+  animation: activePulse 1.8s ease-in-out infinite;
+}
+
+.bubble-row.selected .bubble {
+  border-color: #5b86c9;
+  box-shadow: 0 0 0 3px rgba(91, 134, 201, 0.16);
+}
+
+.bubble-row.active.selected .bubble {
+  border-color: #149184;
+  box-shadow:
+    0 0 0 3px rgba(91, 134, 201, 0.18),
+    0 0 0 7px rgba(20, 145, 132, 0.12);
+}
+
+@keyframes activePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px rgba(20, 145, 132, 0.1);
+  }
+
+  50% {
+    box-shadow: 0 0 0 7px rgba(20, 145, 132, 0.18);
+  }
 }
 
 .bubble textarea {
@@ -657,23 +681,42 @@ p {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  opacity: 0.64;
-}
-
-.bubble-row:hover .line-tools,
-.bubble-row.active .line-tools {
   opacity: 1;
 }
 
+.bubble-action-tray {
+  max-width: min(520px, 100%);
+  padding: 6px;
+  border: 1px solid rgba(203, 215, 227, 0.88);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 22px rgba(29, 48, 73, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.bubble-row.right .bubble-action-tray {
+  justify-content: flex-end;
+}
+
 .line-tools button {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: auto;
+  min-height: 30px;
+  padding: 0 9px;
   border: 1px solid #cbd7e3;
   border-radius: 6px;
   background: white;
   color: #526071;
+  font-size: 12px;
+}
+
+.line-tools button.danger-tool {
+  color: #b42318;
+  border-color: #fecdd3;
+  background: #fff7f7;
 }
 
 .playback-controls {
