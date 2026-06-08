@@ -21,7 +21,7 @@ import type {
 } from "../types/project";
 import { parseScript } from "../utils/parseScript";
 import { getRecentProjects, saveProject } from "../utils/fileStorage";
-import { transcribeAudio } from "../services/transcriptionService";
+import { TRANSCRIPTION_PROMPT, transcribeAudio } from "../services/transcriptionService";
 import { readAudioDuration, readFileAsDataUrl, validateAudioFile } from "../utils/assetStorage";
 import { migrateProjectToLatest } from "../utils/migrateProject";
 import { generateEstimatedSubtitleTimeline, validateSubtitleTimeline } from "../utils/subtitleTimeline";
@@ -76,6 +76,7 @@ interface ProjectStore {
   transcribeAudioAsset: (audioId: string) => Promise<boolean>;
   transcribeAllAudioAssets: () => Promise<boolean>;
   updateAudioAssetTranscription: (audioId: string, text: string) => void;
+  useRawTranscriptionText: (audioId: string) => void;
   deleteAudioAsset: (audioId: string) => void;
   generateDialogueFromAudioAssets: () => boolean;
   addAudioAssetToDialogue: (audioId: string) => string;
@@ -179,8 +180,8 @@ function sortAudioFiles(files: File[]): File[] {
 }
 
 function detectOrderFromFileName(fileName: string, fallback: number): number {
-  const match = fileName.match(/\d+/);
-  return match ? Number(match[0]) : fallback;
+  const match = fileName.match(/(\d+)/);
+  return match ? Number(match[1]) : fallback;
 }
 
 function normalizeTranscriptionText(text: string, fallbackActorName: string): string {
@@ -190,6 +191,39 @@ function normalizeTranscriptionText(text: string, fallbackActorName: string): st
   const colonIndex = firstLine.search(/[：:]/);
   if (colonIndex >= 0) return firstLine.slice(colonIndex + 1).trim() || firstLine.trim();
   return firstLine.replace(new RegExp(`^${fallbackActorName}\\s*`), "").trim();
+}
+
+function getFinalTranscriptionText(audio: AudioAsset): string {
+  if (audio.isEdited && audio.editedText?.trim()) return audio.editedText.trim();
+  if (audio.rawTranscriptionText?.trim()) return audio.rawTranscriptionText.trim();
+  if (audio.finalText?.trim()) return audio.finalText.trim();
+  if (audio.transcriptionText?.trim()) return audio.transcriptionText.trim();
+  return "[未识别文字]";
+}
+
+function withFinalTranscription(audio: AudioAsset): AudioAsset {
+  const finalText = getFinalTranscriptionText(audio);
+  return {
+    ...audio,
+    finalText,
+    transcriptionText: finalText === "[未识别文字]" ? "" : finalText,
+  };
+}
+
+function syncLinesWithAudio(lines: ScriptLine[], audio: AudioAsset): ScriptLine[] {
+  const finalText = getFinalTranscriptionText(audio);
+  return lines.map((line) =>
+    line.audioId === audio.id ? { ...line, text: finalText, isEdited: audio.isEdited, updatedAt: now() } : line,
+  );
+}
+
+function sortAudioByFileNameNumber(audioList: AudioAsset[]): AudioAsset[] {
+  return [...audioList].sort((first, second) => {
+    const firstOrder = detectOrderFromFileName(first.fileName, Number.MAX_SAFE_INTEGER);
+    const secondOrder = detectOrderFromFileName(second.fileName, Number.MAX_SAFE_INTEGER);
+    if (firstOrder !== secondOrder) return firstOrder - secondOrder;
+    return (first.uploadOrder ?? 0) - (second.uploadOrder ?? 0);
+  });
 }
 
 async function createAudioAsset(actorId: string, file: File, uploadOrder: number): Promise<AudioAsset> {
@@ -208,9 +242,15 @@ async function createAudioAsset(actorId: string, file: File, uploadOrder: number
     fileType: file.name.toLowerCase().split(".").pop() ?? "",
     fileSize: file.size,
     duration,
+    language: "zh-CN",
+    rawTranscriptionText: "",
+    editedText: "",
+    finalText: "",
+    isEdited: false,
     uploadOrder,
     detectedOrder: detectOrderFromFileName(file.name, uploadOrder),
     transcriptionStatus: "pending",
+    transcriptionProvider: "",
     transcriptionText: "",
     importedAt: now(),
   };
@@ -250,15 +290,25 @@ function normalizeProject(project: Project): Project {
       },
     },
     audioSources: migrated.audioSources ?? [],
-    audioAssets: (migrated.audioAssets ?? []).map((audio, index) => ({
-      ...audio,
-      fileType: audio.fileType ?? audio.fileName.toLowerCase().split(".").pop() ?? "",
-      fileSize: audio.fileSize,
-      uploadOrder: audio.uploadOrder ?? index + 1,
-      detectedOrder: audio.detectedOrder ?? detectOrderFromFileName(audio.fileName, index + 1),
-      transcriptionStatus: audio.transcriptionStatus ?? (audio.transcriptionText ? "completed" : "pending"),
-      transcriptionText: audio.transcriptionText ?? "",
-    })),
+    audioAssets: (migrated.audioAssets ?? []).map((audio, index) => {
+      const rawTranscriptionText = audio.rawTranscriptionText ?? audio.transcriptionText ?? "";
+      return withFinalTranscription({
+        ...audio,
+        fileType: audio.fileType ?? audio.fileName.toLowerCase().split(".").pop() ?? "",
+        fileSize: audio.fileSize,
+        language: audio.language ?? "zh-CN",
+        rawTranscriptionText,
+        editedText: audio.editedText ?? "",
+        finalText: audio.finalText ?? "",
+        isEdited: audio.isEdited ?? false,
+        uploadOrder: audio.uploadOrder ?? index + 1,
+        detectedOrder: audio.detectedOrder ?? detectOrderFromFileName(audio.fileName, index + 1),
+        transcriptionStatus:
+          audio.transcriptionStatus ?? (rawTranscriptionText || audio.finalText || audio.transcriptionText ? "completed" : "pending"),
+        transcriptionProvider: audio.transcriptionProvider ?? "",
+        transcriptionText: audio.transcriptionText ?? "",
+      });
+    }),
   };
 }
 
@@ -449,7 +499,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     });
 
     set({ transcriptionStatus: "transcribing", lastMessage: "正在识别音频..." });
-    const result = await transcribeAudio(file, { mode: "mock", language: "auto" });
+    const result = await transcribeAudio(file, { mode: "mock", language: "zh-CN", prompt: TRANSCRIPTION_PROMPT });
     if (!result.success) {
       set({ transcriptionStatus: "failed", errorMessage: result.errors.join(" ") });
       return false;
@@ -734,6 +784,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const project = get().project;
     const audio = project?.audioAssets?.find((item) => item.id === audioId);
     if (!project || !audio) return false;
+    if (
+      audio.isEdited &&
+      !confirm(
+        "当前文字已经被手动修改。重新识别会更新模型原始识别结果，但不会自动覆盖你手动修改的文字。是否继续？",
+      )
+    ) {
+      return false;
+    }
     if (!audio.filePath) {
       set({
         errorMessage: "文件丢失，请重新上传音频。",
@@ -764,7 +822,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const response = await fetch(audio.filePath);
       const blob = await response.blob();
       const file = new File([blob], audio.fileName, { type: blob.type || `audio/${audio.fileType ?? "mpeg"}` });
-      const result = await transcribeAudio(file, { mode: "mock", language: "auto" });
+      const result = await transcribeAudio(file, { mode: "mock", language: "zh-CN", prompt: TRANSCRIPTION_PROMPT });
       const latestProject = get().project;
       const latestAudio = latestProject?.audioAssets?.find((item) => item.id === audioId);
       const actor = latestProject?.actors.find((item) => item.id === latestAudio?.actorId);
@@ -776,7 +834,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ...current,
             audioAssets: (current.audioAssets ?? []).map((item) =>
               item.id === audioId
-                ? { ...item, transcriptionStatus: "failed", transcriptionError: result.errors.join(" ") }
+                ? withFinalTranscription({
+                    ...item,
+                    language: result.language,
+                    rawTranscriptionText: result.fullText,
+                    transcriptionStatus: "failed",
+                    transcriptionProvider: result.provider,
+                    transcriptionError: result.errors.join(" "),
+                  })
                 : item,
             ),
           })),
@@ -784,24 +849,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return false;
       }
       const transcriptionText = normalizeTranscriptionText(result.fullText, actor?.name ?? "");
+      const nextAudio = withFinalTranscription({
+        ...latestAudio,
+        language: result.language,
+        rawTranscriptionText: transcriptionText,
+        finalText: latestAudio.isEdited ? latestAudio.finalText : transcriptionText,
+        transcriptionStatus: transcriptionText ? "completed" : "failed",
+        transcriptionProvider: result.provider,
+        transcriptionError: transcriptionText ? "" : "未识别到有效人声，请检查音频内容是否清晰。",
+      });
       set({
-        errorMessage: "",
-        lastMessage: `${audio.fileName} 识别完成。`,
+        errorMessage: nextAudio.transcriptionError || "",
+        lastMessage: nextAudio.transcriptionStatus === "completed" ? `${audio.fileName} 识别完成。` : `${audio.fileName} 识别失败。`,
         project: withProjectUpdate(latestProject, (current) => ({
           ...current,
-          audioAssets: (current.audioAssets ?? []).map((item) =>
-            item.id === audioId
-              ? {
-                  ...item,
-                  transcriptionStatus: transcriptionText ? "completed" : "failed",
-                  transcriptionText: transcriptionText || "[未识别文字]",
-                  transcriptionError: transcriptionText ? "" : "未识别到有效人声，请检查音频内容是否清晰。",
-                }
-              : item,
-          ),
+          audioAssets: (current.audioAssets ?? []).map((item) => (item.id === audioId ? nextAudio : item)),
+          lines: syncLinesWithAudio(current.lines, nextAudio),
         })),
       });
-      return Boolean(transcriptionText);
+      return nextAudio.transcriptionStatus === "completed";
     } catch {
       const latestProject = get().project;
       if (!latestProject) return false;
@@ -842,25 +908,44 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   updateAudioAssetTranscription: (audioId, text) => {
     const project = get().project;
     if (!project) return;
+    const currentAudio = project.audioAssets?.find((audio) => audio.id === audioId);
+    if (!currentAudio) return;
+    const nextAudio = withFinalTranscription({
+      ...currentAudio,
+      editedText: text,
+      finalText: text.trim() || "[未识别文字]",
+      isEdited: true,
+      transcriptionStatus: text.trim() ? "edited" : "pending",
+      transcriptionError: "",
+    });
     set({
       project: withProjectUpdate(project, (current) => ({
         ...current,
-        audioAssets: (current.audioAssets ?? []).map((audio) =>
-          audio.id === audioId
-            ? {
-                ...audio,
-                transcriptionText: text,
-                transcriptionStatus: text.trim() ? "completed" : "pending",
-                transcriptionError: "",
-              }
-            : audio,
-        ),
-        lines: current.lines.map((line) =>
-          line.audioId === audioId
-            ? { ...line, text: text.trim() || "[未识别文字]", source: "edited", isEdited: true, updatedAt: now() }
-            : line,
-        ),
+        audioAssets: (current.audioAssets ?? []).map((audio) => (audio.id === audioId ? nextAudio : audio)),
+        lines: syncLinesWithAudio(current.lines, nextAudio),
       })),
+    });
+  },
+  useRawTranscriptionText: (audioId) => {
+    const project = get().project;
+    if (!project) return;
+    const currentAudio = project.audioAssets?.find((audio) => audio.id === audioId);
+    if (!currentAudio) return;
+    const nextAudio = withFinalTranscription({
+      ...currentAudio,
+      editedText: "",
+      isEdited: false,
+      finalText: currentAudio.rawTranscriptionText ?? "",
+      transcriptionStatus: currentAudio.rawTranscriptionText?.trim() ? "completed" : "pending",
+      transcriptionError: "",
+    });
+    set({
+      project: withProjectUpdate(project, (current) => ({
+        ...current,
+        audioAssets: (current.audioAssets ?? []).map((audio) => (audio.id === audioId ? nextAudio : audio)),
+        lines: syncLinesWithAudio(current.lines, nextAudio),
+      })),
+      lastMessage: "已使用新的识别结果。",
     });
   },
   deleteAudioAsset: (audioId) => {
@@ -915,7 +1000,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const createdLines: ScriptLine[] = assets.map((audio, index) => ({
       id: id("line"),
       speakerId: audio.actorId,
-      text: audio.transcriptionText?.trim() || "[未识别文字]",
+      text: getFinalTranscriptionText(audio),
       type: "dialogue",
       order: index + 1,
       audioId: audio.id,
@@ -952,7 +1037,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const newLine: ScriptLine = {
       id: id("line"),
       speakerId: audio.actorId,
-      text: audio.transcriptionText?.trim() || "[未识别文字]",
+      text: getFinalTranscriptionText(audio),
       type: "dialogue",
       order: project.lines.length + 1,
       audioId: audio.id,
@@ -1030,7 +1115,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       lines = audioAssets.map((audio, index) => ({
         id: id("line"),
         speakerId: audio.actorId,
-        text: audio.transcriptionText?.trim() || "[未识别文字]",
+        text: getFinalTranscriptionText(audio),
         type: "dialogue",
         order: index + 1,
         audioId: audio.id,
@@ -1061,6 +1146,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         }
       }
       lines = sorted;
+    } else if (mode === "fileName") {
+      const audioRank = new Map(sortAudioByFileNameNumber(audioAssets).map((audio, index) => [audio.id, index]));
+      lines.sort(
+        (first, second) =>
+          (audioRank.get(first.audioId ?? "") ?? first.order) - (audioRank.get(second.audioId ?? "") ?? second.order),
+      );
     } else {
       lines.sort((first, second) => {
         const firstAudio = getAudio(first);
@@ -1068,13 +1159,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         if (mode === "uploadTime") {
           return (firstAudio?.uploadOrder ?? first.order) - (secondAudio?.uploadOrder ?? second.order);
         }
-        const firstOrder = firstAudio?.detectedOrder ?? firstAudio?.uploadOrder ?? first.order;
-        const secondOrder = secondAudio?.detectedOrder ?? secondAudio?.uploadOrder ?? second.order;
-        if (firstOrder !== secondOrder) return firstOrder - secondOrder;
-        return (firstAudio?.fileName ?? "").localeCompare(secondAudio?.fileName ?? "", undefined, {
-          numeric: true,
-          sensitivity: "base",
-        });
+        return first.order - second.order;
       });
     }
 

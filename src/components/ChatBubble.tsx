@@ -53,7 +53,10 @@ export function ChatBubble({
   }
 
   return (
-    <article className={`${sideClass} ${isActive ? "active" : ""} ${isSelected ? "selected" : ""}`} id={`line-${line.id}`}>
+    <article
+      className={`${sideClass} ${isActive ? "active" : ""} ${isSelected ? "selected" : ""} ${actionsOpen ? "context-open" : ""}`}
+      id={`line-${line.id}`}
+    >
       <div className="bubble-avatar">
         <ActorAvatar actor={actor} />
       </div>

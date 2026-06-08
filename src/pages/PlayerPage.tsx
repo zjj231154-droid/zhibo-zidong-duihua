@@ -48,6 +48,7 @@ export function PlayerPage() {
     lastMessage,
     errorMessage,
     setView,
+    startNewProject,
     saveCurrentProject,
     setCurrentIndex,
     setPlaybackStatus,
@@ -108,6 +109,16 @@ export function PlayerPage() {
         void saveCurrentProject();
         return;
       }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        startNewProject();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        if (project) exportFile("txt");
+        return;
+      }
       if (event.key === "Escape") {
         setActionLineId("");
         setSelectedLineId("");
@@ -140,6 +151,29 @@ export function PlayerPage() {
         return;
       }
       if (!selectedLineId) return;
+      if ((event.ctrlKey || event.metaKey) && event.key === "ArrowUp") {
+        event.preventDefault();
+        pause();
+        moveLine(selectedLineId, "up");
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === "ArrowDown") {
+        event.preventDefault();
+        pause();
+        moveLine(selectedLineId, "down");
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        const selectedLine = project?.lines.find((line) => line.id === selectedLineId);
+        if (selectedLine?.text) void navigator.clipboard?.writeText(selectedLine.text);
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        playLine(selectedLineId);
+        return;
+      }
       if (event.key.toLowerCase() === "e") {
         event.preventDefault();
         beginEditLine(selectedLineId);

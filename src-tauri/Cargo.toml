@@ -1,6 +1,6 @@
 [package]
 name = "script_chat_player"
-version = "1.14.0"
+version = "1.15.0"
 description = "Script Chat Player desktop shell"
 authors = ["Script Chat Player"]
 license = ""

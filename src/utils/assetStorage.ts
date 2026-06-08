@@ -9,12 +9,16 @@ export function getFileExtension(file: File): string {
   return file.name.toLowerCase().split(".").pop() ?? "";
 }
 
+export function isSupportedAudioFile(file: File): boolean {
+  return supportedAudioExtensions.includes(getFileExtension(file));
+}
+
 export function validateAudioFile(file?: File): string[] {
   const errors: string[] = [];
   if (!file || file.size === 0) errors.push("音频文件为空。");
   if (!file) return errors;
-  if (!supportedAudioExtensions.includes(getFileExtension(file))) {
-    errors.push("该音频格式暂不支持，请上传 mp3、wav、m4a、aac 或 ogg 格式。");
+  if (!isSupportedAudioFile(file)) {
+    errors.push("当前音频格式暂不支持，请上传 mp3、wav、m4a、aac、ogg、flac 或 webm 格式。");
   }
   if (file.size > maxAudioSize) {
     errors.push("音频文件过大，请上传 100MB 以内的音频文件。");

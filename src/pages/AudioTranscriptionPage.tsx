@@ -22,6 +22,7 @@ const statusLabels: Record<string, string> = {
   failed: "识别失败",
   unsupported: "格式不支持",
   missing: "文件丢失",
+  edited: "已人工修改",
 };
 
 function formatDuration(duration?: number): string {
@@ -41,6 +42,7 @@ interface ActorAudioWindowProps {
   onUpload: (actorId: string, files: File[]) => void;
   onTranscribe: (audioId: string) => void;
   onEditText: (audioId: string, text: string) => void;
+  onUseRawText: (audioId: string) => void;
   onAddToDialogue: (audioId: string) => void;
   onDelete: (audioId: string) => void;
 }
@@ -51,6 +53,7 @@ function ActorAudioWindow({
   onUpload,
   onTranscribe,
   onEditText,
+  onUseRawText,
   onAddToDialogue,
   onDelete,
 }: ActorAudioWindowProps) {
@@ -120,11 +123,19 @@ function ActorAudioWindow({
               <label className="field compact-field">
                 识别文字
                 <textarea
-                  value={audio.transcriptionText ?? ""}
+                  value={audio.finalText ?? audio.transcriptionText ?? ""}
                   placeholder="识别后会显示文字，也可以手动输入。"
                   onChange={(event) => onEditText(audio.id, event.target.value)}
                 />
               </label>
+              {audio.rawTranscriptionText && audio.isEdited && (
+                <div className="raw-transcription-box">
+                  <span>新识别结果：{audio.rawTranscriptionText}</span>
+                  <button type="button" className="ghost-button" onClick={() => onUseRawText(audio.id)}>
+                    使用新识别结果
+                  </button>
+                </div>
+              )}
               {audio.transcriptionError && <div className="error-banner compact">{audio.transcriptionError}</div>}
               <div className="audio-card-actions">
                 <button type="button" className="ghost-button" onClick={() => onTranscribe(audio.id)}>
@@ -135,7 +146,13 @@ function ActorAudioWindow({
                   <ListPlus size={15} />
                   添加到对话
                 </button>
-                <button type="button" className="ghost-button danger-text" onClick={() => onDelete(audio.id)}>
+                <button
+                  type="button"
+                  className="ghost-button danger-text"
+                  onClick={() => {
+                    if (confirm("是否确认删除该段音频和识别文字？")) onDelete(audio.id);
+                  }}
+                >
                   <Trash2 size={15} />
                   删除
                 </button>
@@ -314,6 +331,7 @@ export function AudioTranscriptionPage() {
     transcribeAudioAsset,
     transcribeAllAudioAssets,
     updateAudioAssetTranscription,
+    useRawTranscriptionText,
     deleteAudioAsset,
     generateDialogueFromAudioAssets,
     addAudioAssetToDialogue,
@@ -402,6 +420,7 @@ export function AudioTranscriptionPage() {
             onUpload={(actorId, files) => void uploadActorAudioAssets(actorId, files)}
             onTranscribe={(audioId) => void transcribeAudioAsset(audioId)}
             onEditText={updateAudioAssetTranscription}
+            onUseRawText={useRawTranscriptionText}
             onAddToDialogue={addAudioAssetToDialogue}
             onDelete={deleteAudioAsset}
           />

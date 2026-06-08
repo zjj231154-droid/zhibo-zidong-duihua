@@ -21,7 +21,8 @@ export type AudioAssetTranscriptionStatus =
   | "completed"
   | "failed"
   | "unsupported"
-  | "missing";
+  | "missing"
+  | "edited";
 
 export interface Project {
   id: string;
@@ -127,9 +128,15 @@ export interface AudioAsset {
   fileType?: string;
   fileSize?: number;
   duration?: number;
+  language?: "zh-CN";
+  rawTranscriptionText?: string;
+  editedText?: string;
+  finalText?: string;
+  isEdited?: boolean;
   uploadOrder?: number;
   detectedOrder?: number;
   transcriptionStatus?: AudioAssetTranscriptionStatus;
+  transcriptionProvider?: string;
   transcriptionText?: string;
   transcriptionError?: string;
   importedAt: string;

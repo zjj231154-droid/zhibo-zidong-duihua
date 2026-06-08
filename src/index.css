@@ -168,6 +168,22 @@
   color: #991b1b;
 }
 
+.status-edited {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.raw-transcription-box {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #78350f;
+  font-size: 12px;
+}
+
 .dialogue-workbench {
   margin-top: 16px;
 }
@@ -217,6 +233,7 @@
 .dialogue-table {
   display: grid;
   gap: 8px;
+  overflow-x: auto;
 }
 
 .dialogue-table-head,
@@ -225,6 +242,7 @@
   grid-template-columns: 52px 120px minmax(140px, 1fr) minmax(220px, 1.4fr) 72px 90px minmax(250px, auto);
   gap: 8px;
   align-items: center;
+  min-width: 980px;
 }
 
 .dialogue-table-head {
@@ -964,13 +982,15 @@ p {
 }
 
 .line-tools {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   gap: 4px;
-  opacity: 1;
 }
 
 .bubble-action-tray {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
   max-width: min(520px, 100%);
   padding: 6px;
   border: 1px solid rgba(203, 215, 227, 0.88);
@@ -978,6 +998,11 @@ p {
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 10px 22px rgba(29, 48, 73, 0.12);
   backdrop-filter: blur(8px);
+}
+
+.bubble-row.context-open .line-tools,
+.bubble-row.context-open .bubble-action-tray {
+  display: flex;
 }
 
 .bubble-row.right .bubble-action-tray {
@@ -1266,7 +1291,8 @@ p {
   }
 
   .audio-management-panel {
-    max-height: 360px;
+    max-height: none;
+    min-height: 360px;
     border-right: 0;
     border-bottom: 1px solid #d9e2ec;
   }
